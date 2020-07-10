@@ -1,0 +1,150 @@
+doctype html
+head
+  meta(charset='UTF-8')
+  meta(name='viewport' content='width=device-width, initial-scale=1.0')
+  title Cipher
+body
+  script.
+    const publicKey = `#{publicKey}`
+    const privateKey = `#{privateKey}`
+    const textEncoder = new TextEncoder();
+
+    function str2ab(str) {
+      const buf = new ArrayBuffer(str.length);
+      const bufView = new Uint8Array(buf);
+      for (let i = 0, strLen = str.length; i < strLen; i++) {
+        bufView[i] = str.charCodeAt(i);
+          }
+            return buf;
+    }
+    function importPublicKey(pem) {
+    // Это плохое решение как показала практика, хидеры и футеры могут отличаться количеством пробелов
+      const pemHeader = "-----BEGIN PUBLIC KEY----- ";
+      const pemFooter = "-----END PUBLIC KEY----- ";
+      const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length-1);
+        // base64 decode the string to get the binary data
+      const binaryDerString = window.atob(pemContents);
+        // convert from a binary string to an ArrayBuffer
+      const binaryDer = str2ab(binaryDerString);
+      return window.crypto.subtle.importKey(
+        "spki",
+        binaryDer,
+          {
+            name: "RSA-OAEP",
+            hash: `#{hash}`
+          },
+          true,
+          ["encrypt"]
+        );
+    }
+    function importPrivateKey(pem) {
+        // fetch the part of the PEM string between header and footer
+        // см. Комментарий аналогичный выше
+      const pemHeader = "-----BEGIN PRIVATE KEY-----";
+      const pemFooter = " -----END PRIVATE KEY----- ";
+      const pemContents = pem.substring(pemHeader.length+1, pem.length - pemFooter.length);
+        // base64 decode the string to get the binary data
+      const binaryDerString = window.atob(pemContents);
+        // convert from a binary string to an ArrayBuffer
+      const binaryDer = str2ab(binaryDerString);
+      return window.crypto.subtle.importKey(
+                "pkcs8",
+                binaryDer,
+                {
+                  name: "RSA-OAEP",
+                  modulusLength: 2048,
+                  publicExponent: new Uint8Array([1, 0, 1]),
+                  hash: `#{hash}`,
+                },
+                true,
+                ["decrypt"]
+        );
+    }
+    // Функция кодировки
+    const doEncrypt = async (data) => {
+      const pubKey = await importPublicKey(publicKey)
+      const encodedText = textEncoder.encode(data);
+      const signature = await window.crypto.subtle.encrypt(
+                {name:"RSA-OAEP"},
+                pubKey,
+                encodedText
+      );
+        // Проверка раскодировки приватным ключом, свежезакодированной строки
+      const privKey = await importPrivateKey(privateKey);
+      const toBack = btoa(String.fromCharCode.apply(null, new Uint8Array(signature)))
+      const afterBack = str2ab(atob(toBack))
+      console.log("Раскодирую......",new Uint8Array(afterBack), new Uint8Array(signature))
+      try {
+        const result = await window.crypto.subtle.decrypt(
+                        {
+                          name: "RSA-OAEP"
+                        },
+                        privKey,
+                        afterBack,
+                )
+        const resultView = new Uint8Array(result);
+        console.log("Итого на бэке", String.fromCharCode.apply(null, resultView));
+      } catch (e) {
+        console.log("Не смог раскодировать..., ошибка ", e.message)
+      }
+      return toBack
+    }
+    // Функция кодировки и отправки сообщения
+    const encryptData=(myForm)=>{
+      console.log("Отправляю")
+      doEncrypt(myForm.fname.value).then(data=>{
+        myForm.fclipher.value = data
+        myForm.submit()
+      })
+      return false
+    }
+    // Раскодировка сообщения с бэкэнда
+    async function backDecoder(data) {
+      const privKey = await importPrivateKey(privateKey);
+      const fromBack = str2ab(atob(data))
+      // const toBack = btoa(String.fromCharCode.apply(null, new Uint8Array(signature)))
+      // const afterBack = str2ab(atob(toBack))
+      let resultView = ""
+      try {
+        const result = await window.crypto.subtle.decrypt(
+                {
+                  name: "RSA-OAEP"
+                },
+                privKey,
+                fromBack,
+        )
+        resultView = String.fromCharCode.apply(null, new Uint8Array(result));
+        // console.log("Итого на бэке", String.fromCharCode.apply(null, resultView));
+      } catch (e) {
+        resultView = "Не смог раскодировать..., ошибка "+e.message
+      }
+
+      return resultView
+    }
+    backDecoder('#{testData}').then(x=>{document.querySelector("label[id=decoderData]").innerHTML = x
+    console.log("Выполнено",x)})
+
+  h1 Эксперименты с шифрованием web crypto api vs node crypto
+  h5 Используемый hash `#{hash}`
+  h5 1. Проверка декодирования данных с бэкенда `#{testString2}`
+  h5 Результат
+  label#decoderData ***
+  p
+  p
+  br
+  h5 2.Отправка закодированного сообщения на бэкенд
+  form(action='/secret', method='post', onsubmit="encryptData(this); return false")
+    label(for='fname') Строка для кодирования:
+    br
+    input#fname(type='text', name='fname', value=testString)
+    br
+    input#fclipher(type='text', name='fclipher', value='', hidden)
+    input#publicKey(type='text', name='publicKey', value=publicKey, hidden)
+    input#privateKey(type='text', name='privateKey', value=privateKey, hidden)
+    input(type='submit', value='Submit')
+  br
+  p Публичный ключ
+  p(style="width: 90%; word-wrap: break-word; font-size:10px") `#{publicKey}`
+  p Приватный ключ
+  p(style="width: 90%; word-wrap: break-word; font-size:10px") `#{privateKey}`
+
